@@ -33,6 +33,9 @@ dev = ["build>=1.2", "maturin>=1.5,<2.0", "pytest>=8.0", "twine>=5.0", "pandas>=
 Homepage = "https://github.com/adakite/cleanfig"
 Repository = "https://github.com/adakite/cleanfig"
 Issues = "https://github.com/adakite/cleanfig/issues"
+Gallery = "https://adakite.github.io/cleanfig/gallery/"
+Documentation = "https://adakite.github.io/cleanfig/"
+
 
 [tool.maturin]
 python-source = "python"
