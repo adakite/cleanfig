@@ -4,10 +4,11 @@
 
 It is intentionally narrow: simple publication-style defaults, light visual clutter, compact labeling, and a small public API. The focus is on figures that should look close to final output without extensive styling code.
 
+Useful links:
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/adakite/cleanfig/main/docs/assets/cleanfig_demo.png" width="900" alt="Cleanfig example showing a four-panel scientific figure">
-</p>
+- Gallery: https://adakite.github.io/cleanfig/gallery/
+- Documentation landing page: https://adakite.github.io/cleanfig/
+- Repository: https://github.com/adakite/cleanfig
 
 ## Installation
 
