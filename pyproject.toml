@@ -1,0 +1,42 @@
+[build-system]
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "cleanfig"
+version = "0.1.0"
+description = "Small vector-first scientific plotting with clean publication-style defaults."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Antoine Lucas" }]
+dependencies = ["numpy>=1.23"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Rust",
+  "Topic :: Scientific/Engineering :: Visualization",
+]
+
+[project.optional-dependencies]
+dev = ["build>=1.2", "maturin>=1.5,<2.0", "pytest>=8.0", "twine>=5.0", "pandas>=2.0"]
+
+[project.urls]
+Homepage = "https://github.com/adakite/cleanfig"
+Repository = "https://github.com/adakite/cleanfig"
+Issues = "https://github.com/adakite/cleanfig/issues"
+
+[tool.maturin]
+python-source = "python"
+module-name = "cleanfig._cleanfig"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

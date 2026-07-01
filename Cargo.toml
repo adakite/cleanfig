@@ -1,0 +1,23 @@
+[package]
+name = "cleanfig"
+version = "0.1.0"
+edition = "2021"
+description = "Small vector-first scientific plotting with clean publication-style defaults."
+license = "MIT"
+repository = "https://github.com/adakite/cleanfig"
+homepage = "https://github.com/adakite/cleanfig"
+
+[lib]
+name = "_cleanfig"
+crate-type = ["cdylib"]
+
+[dependencies]
+numpy = "0.21"
+pyo3 = { version = "0.21", features = ["extension-module", "abi3-py310"] }
+svg2pdf = "0.13"
+
+[profile.release]
+codegen-units = 1
+debug = 0
+lto = true
+strip = "symbols"
