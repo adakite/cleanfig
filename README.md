@@ -11,7 +11,7 @@ Useful links:
 - Repository: https://github.com/adakite/cleanfig
 
 <p align="center">
-  <img src="docs/gallery/assets/four_panels_dark.svg" width="900" alt="cleanfig four-panel dark example">
+  <img src="https://adakite.github.io/cleanfig/gallery/assets/four_panels_dark.svg" width="900" alt="cleanfig four-panel dark example">
 </p>
 
 ## Installation
