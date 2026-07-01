@@ -1,6 +1,6 @@
 [package]
 name = "cleanfig"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 description = "Small vector-first scientific plotting with clean publication-style defaults."
 license = "MIT"

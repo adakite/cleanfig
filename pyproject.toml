@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "cleanfig"
-version = "0.1.0"
+version = "1.0.0"
 description = "Small vector-first scientific plotting with clean publication-style defaults."
 readme = "README.md"
 requires-python = ">=3.10"
