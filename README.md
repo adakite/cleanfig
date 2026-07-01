@@ -10,6 +10,10 @@ Useful links:
 - Documentation landing page: https://adakite.github.io/cleanfig/
 - Repository: https://github.com/adakite/cleanfig
 
+<p align="center">
+  <img src="docs/gallery/assets/four_panels_dark.svg" width="900" alt="cleanfig four-panel dark example">
+</p>
+
 ## Installation
 
 Install the latest GitHub version:
