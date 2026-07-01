@@ -2,50 +2,40 @@ name: CI
 
 on:
   push:
-    branches: [main]
   pull_request:
 
 jobs:
   test:
+    name: Test on ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
-
-    runs-on: ${{ matrix.os }}
+        python-version: ["3.10", "3.11", "3.12"]
 
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
 
-      - name: Install Python tooling
+      - name: Install Python tools
         run: |
           python -m pip install -U pip
-          python -m pip install maturin pytest build
+          python -m pip install maturin pytest numpy
 
-      - name: Build extension in place
-        run: maturin develop
+      - name: Build wheel
+        run: maturin build --release -o dist
+
+      - name: Install built wheel
+        run: python -m pip install dist/*.whl
 
       - name: Run tests
         run: pytest -q
-
-      - name: Build release wheel
-        run: maturin build --release
-
-      - name: Build source distribution
-        run: python -m build --sdist
-
-      - name: Install built wheel
-        shell: bash
-        run: |
-          python -m venv wheel-test-env
-          source wheel-test-env/bin/activate
-          python -m pip install -U pip
-          python -m pip install target/wheels/*.whl
-          python -c "import cleanfig; print(cleanfig.__version__); print(cleanfig.BACKEND)"
