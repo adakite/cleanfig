@@ -1,4 +1,4 @@
-name: Release Build
+name: Release
 
 on:
   push:
@@ -7,46 +7,81 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
-
-    runs-on: ${{ matrix.os }}
+  build-sdist:
+    name: Build sdist
+    runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.12"
 
-      - uses: dtolnay/rust-toolchain@stable
-
-      - name: Install build tools
+      - name: Install maturin
         run: |
           python -m pip install -U pip
-          python -m pip install maturin build twine
-
-      - name: Build wheels
-        run: maturin build --release
+          python -m pip install maturin
 
       - name: Build source distribution
-        run: python -m build --sdist
+        run: maturin sdist -o dist
 
-      - name: Check artifacts
-        run: python -m twine check dist/* target/wheels/*
-
-      - name: Upload artifacts
+      - name: Upload sdist artifact
         uses: actions/upload-artifact@v4
         with:
-          name: cleanfig-${{ matrix.os }}-py${{ matrix.python-version }}
-          path: |
-            dist/*
-            target/wheels/*
+          name: cleanfig-sdist
+          path: dist/*
 
-      # For future trusted publishing, add a separate publish job using:
-      # uses: pypa/gh-action-pypi-publish@release/v1
-      # and configure PyPI Trusted Publishing outside the repository.
+  build-wheels:
+    name: Build wheel ${{ matrix.os }} / ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64
+          - os: macos-latest
+            target: universal2-apple-darwin
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --find-interpreter
+          manylinux: auto
+
+      - name: Upload wheel artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cleanfig-${{ matrix.os }}-${{ matrix.target }}
+          path: dist/*
+
+  publish:
+    name: Publish to PyPI
+    needs:
+      - build-sdist
+      - build-wheels
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          pattern: cleanfig-*
+          merge-multiple: true
+          path: dist
+
+      - name: Show distributions
+        run: ls -lh dist
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
