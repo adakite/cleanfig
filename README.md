@@ -109,7 +109,7 @@ Log scales require strictly positive values and strictly positive limits.
 - `size`: marker diameter in points
 - `alpha`: opacity
 - `label`: legend entry
-- `cmap`: colormap name for mapped colors
+- `cmap`: colormap name for mapped colors; see `Built-in Colormaps` below
 - `yaxis`: `"left"` or `"right"` for dual-Y figures
 
 Returns a `PlotHandle` when color mapping is used.
@@ -145,7 +145,7 @@ Returns a `PlotHandle` when color mapping is used.
 ### `ax.field(grid, cmap=None, cell_edges=False, render="auto")`
 
 - `grid`: 2D numeric array
-- `cmap`: colormap name
+- `cmap`: colormap name; see `Built-in Colormaps` below
 - `cell_edges`: draw subtle cell borders when `True`
 - `render`: `"auto"`, `"grid"`, or `"embedded"`
 
@@ -171,7 +171,7 @@ Current default is `"binned"`.
 - `point_color`: constant color, flat array, or grouped arrays
 - `point_size`: point diameter
 - `point_alpha`: point opacity
-- `point_cmap`: colormap for mapped points
+- `point_cmap`: colormap for mapped points; see `Built-in Colormaps` below
 
 Returns a `PlotHandle` when mapped point colors are used.
 
@@ -207,6 +207,32 @@ Supported export targets:
 - `SVG`
 - `HTML` with embedded SVG
 - `PDF` through SVG conversion in the Rust backend
+
+## Built-in Colormaps
+
+`cleanfig` currently ships with a larger built-in continuous colormap set.
+
+General:
+
+- `gray`
+- `magma`
+- `bone`
+
+Fabio Crameri family currently integrated:
+
+- Sequential-ish: `acton`, `bamako`, `batlow`, `bilbao`, `devon`, `hawaii`, `imola`, `lajolla`, `lapaz`, `lipari`, `navia`, `nuuk`, `oslo`, `tokyo`, `turku`
+- Diverging / balanced: `berlin`, `broc`, `cork`, `managua`, `roma`, `tofino`, `vanimo`, `vik`
+
+Notes:
+
+- These Crameri maps were integrated as built-in names so the plotting API stays unchanged: `cmap="roma"`, `cmap="batlow"`, etc.
+- Unknown colormap names still fall back to `batlow`.
+- Colormap attribution and licensing notice: [LICENSE-THIRD-PARTY.md](LICENSE-THIRD-PARTY.md)
+
+Citation for the integrated Scientific colour maps:
+
+> Crameri, F. (2023). Scientific colour maps (8.0.1). Zenodo.
+> https://doi.org/10.5281/zenodo.8409685
 
 ## Design Philosophy
 

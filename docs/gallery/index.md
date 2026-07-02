@@ -4,6 +4,10 @@
 
 This gallery shows the shipped examples together with the actual plotting code patterns used to build them.
 
+Built-in continuous colormaps currently available in `cleanfig`: `magma`, `gray`, `bone`, plus a richer Fabio Crameri subset including `batlow`, `vik`, `roma`, `broc`, `cork`, `lapaz`, `lajolla`, `tokyo`, `navia`, `oslo`, and more.
+
+Fabio Crameri citation: `Crameri, F. (2023). Scientific colour maps (8.0.1). Zenodo. https://doi.org/10.5281/zenodo.8409685`
+
 <style>
 .cf-hero {
   margin: 1.2rem 0 1.8rem 0;

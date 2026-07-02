@@ -101,6 +101,24 @@ def test_field_render_modes(tmp_path: Path) -> None:
         assert "<image" not in text_embedded
 
 
+@pytest.mark.parametrize("cmap", ["batlow", "roma", "broc", "lajolla", "navia", "bone"])
+def test_curated_colormaps_are_accepted(tmp_path: Path, cmap: str) -> None:
+    fig = cf.figure(width="single", height=3.0, grid=(1, 2))
+
+    ax0 = fig.panel(0, 0)
+    handle = ax0.scatter([0, 1, 2], [1, 2, 3], color=[0.0, 0.5, 1.0], cmap=cmap)
+    ax0.colorbar(handle, label=cmap)
+
+    ax1 = fig.panel(0, 1)
+    ax1.field(np.arange(16, dtype=float).reshape(4, 4), cmap=cmap)
+
+    out = tmp_path / f"{cmap}.svg"
+    fig.save(str(out))
+    text = out.read_text()
+
+    assert cmap in text
+
+
 def test_histogram_svg_generation(tmp_path: Path) -> None:
     fig = cf.figure(width="single", height=3.0, grid=(1, 1))
     ax = fig.panel(0, 0)

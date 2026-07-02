@@ -22,6 +22,10 @@ It focuses on a compact API, light visual defaults, and direct export to SVG, HT
 - linear and log axes
 - compact legends and integrated colorbars
 - violin, box, histogram, field, scatter, and line plots
+- built-in colormaps: `magma`, `gray`, `bone`, plus a richer Fabio Crameri subset including `batlow`, `vik`, `roma`, `broc`, `cork`, `lapaz`, `lajolla`, `tokyo`, `navia`, `oslo`, and more
+
+Fabio Crameri colormap citation:
+`Crameri, F. (2023). Scientific colour maps (8.0.1). Zenodo. https://doi.org/10.5281/zenodo.8409685`
 
 ## Example Gallery
 
