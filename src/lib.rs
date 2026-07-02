@@ -1,5 +1,9 @@
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine as _;
+use png::{BitDepth, ColorType, Encoder as PngEncoder};
 use std::f64::consts::PI;
 use std::fmt::Write as _;
+use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
@@ -9,8 +13,16 @@ use svg2pdf::{ConversionOptions, PageOptions};
 
 const DPI: f64 = 72.0;
 const FONT_FAMILY_DEFAULT: &str = "\"IBM Plex Sans\", \"Source Sans 3\", Arial, sans-serif";
-const FIELD_LIMIT: usize = 10_000;
+const FIELD_LIMIT: usize = 300_000;
+const FIELD_RASTER_THRESHOLD: usize = 16_384;
 const COLORBAR_HISTOGRAM_LEVELS: usize = 32;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FieldRenderMode {
+    Auto,
+    Grid,
+    Embedded,
+}
 
 #[derive(Clone, Debug)]
 struct FigureScene {
@@ -48,6 +60,9 @@ struct AxisScene {
     colorbars: Vec<Colorbar>,
     x_categories: Option<Vec<String>>,
     hide_x_axis: bool,
+    x_tick_values: Option<Vec<f64>>,
+    y_tick_values: Option<Vec<f64>>,
+    equal_aspect: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -75,6 +90,18 @@ enum Primitive {
         w: f64,
         h: f64,
         style: Style,
+    },
+    FieldGrid {
+        values: Vec<Vec<f64>>,
+        cmap: String,
+        min: f64,
+        max: f64,
+        cell_edges: bool,
+    },
+    FieldRaster {
+        png_data: String,
+        rows: usize,
+        cols: usize,
     },
     Polygon {
         points: Vec<(f64, f64)>,
@@ -243,6 +270,9 @@ impl FigureScene {
                         colorbars: Vec::new(),
                         x_categories: None,
                         hide_x_axis: false,
+                        x_tick_values: None,
+                        y_tick_values: None,
+                        equal_aspect: false,
                     },
                 });
             }
@@ -766,7 +796,7 @@ impl Panel {
         Ok(())
     }
 
-    #[pyo3(signature = (labels, values, yaxis="left", color=None, alpha=1.0))]
+    #[pyo3(signature = (labels, values, yaxis="left", color=None, alpha=1.0, show_x_axis=false))]
     fn bar(
         &self,
         labels: Vec<String>,
@@ -774,6 +804,7 @@ impl Panel {
         yaxis: &str,
         color: Option<&Bound<'_, PyAny>>,
         alpha: f64,
+        show_x_axis: bool,
     ) -> PyResult<()> {
         let ys = extract_vec_f64(values)?;
         if labels.len() != ys.len() {
@@ -793,7 +824,7 @@ impl Panel {
         };
         let axis = &mut fig.panel_mut(self.row, self.col)?.axis;
         axis.x_categories = Some(labels);
-        axis.hide_x_axis = false;
+        axis.hide_x_axis = !show_x_axis;
         for (i, value) in ys.iter().enumerate() {
             let center = i as f64;
             axis.layers.push(Layer {
@@ -893,13 +924,14 @@ impl Panel {
         Ok(())
     }
 
-    #[pyo3(signature = (grid, cmap=None, cell_edges=false))]
+    #[pyo3(signature = (grid, cmap=None, cell_edges=false, render="auto"))]
     fn field(
         &self,
         py: Python<'_>,
         grid: &Bound<'_, PyAny>,
         cmap: Option<String>,
         cell_edges: bool,
+        render: &str,
     ) -> PyResult<Py<PlotHandle>> {
         let values = extract_matrix_f64(grid)?;
         let rows = values.len();
@@ -915,6 +947,7 @@ impl Panel {
             )));
         }
         let cmap_name = cmap.unwrap_or_else(|| "batlow".to_string());
+        let render_mode = parse_field_render_mode(render)?;
         let mut min = f64::INFINITY;
         let mut max = f64::NEG_INFINITY;
         for row in &values {
@@ -924,36 +957,37 @@ impl Panel {
             }
         }
         let mut fig = self.inner.lock().map_err(lock_err)?;
-        let field_edge = fig.theme.axis_color();
         let axis = &mut fig.panel_mut(self.row, self.col)?.axis;
-        for (r, row) in values.iter().enumerate() {
-            for (c, value) in row.iter().enumerate() {
-                let x = c as f64;
-                let y = (rows - 1 - r) as f64;
-                axis.layers.push(Layer {
-                    primitive: Primitive::Rect {
-                        x,
-                        y,
-                        w: 1.0,
-                        h: 1.0,
-                        style: Style {
-                            fill: Some(sample_colormap(&cmap_name, normalize(*value, min, max))),
-                            stroke: if cell_edges {
-                                Some(field_edge.clone())
-                            } else {
-                                None
-                            },
-                            stroke_width_pt: if cell_edges { 0.2 } else { 0.0 },
-                            opacity: 1.0,
-                        },
-                    },
-                    z_index: 5,
-                    y_axis: YAxisSide::Left,
-                });
+        let use_embedded = match render_mode {
+            FieldRenderMode::Auto => rows * cols > FIELD_RASTER_THRESHOLD && !cell_edges,
+            FieldRenderMode::Grid => false,
+            FieldRenderMode::Embedded => !cell_edges,
+        };
+        let primitive = if use_embedded {
+            Primitive::FieldRaster {
+                png_data: field_png_data(&values, &cmap_name, min, max)?,
+                rows,
+                cols,
             }
-        }
+        } else {
+            Primitive::FieldGrid {
+                values: values.clone(),
+                cmap: cmap_name.clone(),
+                min,
+                max,
+                cell_edges,
+            }
+        };
+        axis.layers.push(Layer {
+            primitive,
+            z_index: 5,
+            y_axis: YAxisSide::Left,
+        });
         axis.x_limits = Some((0.0, cols as f64));
         axis.y_limits = Some((0.0, rows as f64));
+        axis.x_tick_values = Some(field_ticks(cols));
+        axis.y_tick_values = Some(field_ticks(rows));
+        axis.equal_aspect = true;
         Py::new(
             py,
             PlotHandle {
@@ -1336,7 +1370,7 @@ fn _cleanfig(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
 fn render_panel(svg: &mut String, fig: &FigureScene, panel: &PanelScene, layout: &PanelLayout) -> PyResult<()> {
     let footer_height = max_footer_height(fig);
-    let axis_layout = axis_layout(layout, footer_height);
+    let axis_layout = axis_layout(layout, footer_height, &panel.axis);
     write!(
         svg,
         "<g data-panel=\"{}-{}\">",
@@ -1367,10 +1401,16 @@ fn render_axis(svg: &mut String, axis: &AxisScene, layout: &AxisLayout, theme: T
     let (rymin, rymax) = axis.resolved_y_limits(YAxisSide::Right);
     let x_ticks = if axis.x_categories.is_some() {
         Vec::new()
+    } else if let Some(values) = &axis.x_tick_values {
+        values.clone()
     } else {
         axis_ticks(xmin, xmax, axis.x_scale, 5)?
     };
-    let y_ticks = axis_ticks(ymin, ymax, axis.y_scale, 5)?;
+    let y_ticks = if let Some(values) = &axis.y_tick_values {
+        values.clone()
+    } else {
+        axis_ticks(ymin, ymax, axis.y_scale, 5)?
+    };
     let right_y_ticks = if has_right_axis {
         axis_ticks(rymin, rymax, axis.right_y_scale, 5)?
     } else {
@@ -1583,10 +1623,78 @@ fn render_primitive(
             let top = y0.min(y1);
             write!(
                 svg,
-                "<rect x=\"{left:.2}\" y=\"{top:.2}\" width=\"{:.2}\" height=\"{:.2}\" {} />",
+                "<rect x=\"{left:.4}\" y=\"{top:.4}\" width=\"{:.4}\" height=\"{:.4}\" shape-rendering=\"crispEdges\" {} />",
                 (x1 - x0).abs(),
                 (y1 - y0).abs(),
                 svg_style(style)
+            )
+            .unwrap();
+        }
+        Primitive::FieldGrid {
+            values,
+            cmap,
+            min,
+            max,
+            cell_edges,
+        } => {
+            let rows = values.len();
+            let cols = values.first().map_or(0, |row| row.len());
+            if rows == 0 || cols == 0 {
+                return Ok(());
+            }
+            let left = map_x_scaled(0.0, xmin, xmax, x_scale, layout)?;
+            let right = map_x_scaled(cols as f64, xmin, xmax, x_scale, layout)?;
+            let top = map_y_scaled(rows as f64, ymin, ymax, y_scale, layout)?;
+            let bottom = map_y_scaled(0.0, ymin, ymax, y_scale, layout)?;
+            let sx = (right - left).abs() / cols as f64;
+            let sy = (bottom - top).abs() / rows as f64;
+            let edge = if *cell_edges {
+                format!(" stroke=\"{}\" stroke-width=\"0.04\"", Color(255, 255, 255).to_hex())
+            } else {
+                String::from(" stroke=\"none\"")
+            };
+            let cell_offset = if *cell_edges { 0.0 } else { 0.02 };
+            let cell_size = if *cell_edges { 1.0 } else { 1.04 };
+            write!(
+                svg,
+                "<g transform=\"translate({:.4},{:.4}) scale({:.8},{:.8})\" shape-rendering=\"crispEdges\">",
+                left,
+                bottom,
+                sx,
+                -sy
+            )
+            .unwrap();
+            for (r, row) in values.iter().enumerate() {
+                for (c, value) in row.iter().enumerate() {
+                    let fill = sample_colormap(cmap, normalize(*value, *min, *max)).to_hex();
+                    write!(
+                        svg,
+                        "<rect x=\"{:.3}\" y=\"{:.3}\" width=\"{:.3}\" height=\"{:.3}\" fill=\"{}\"{} />",
+                        c as f64 - cell_offset,
+                        (rows - 1 - r) as f64 - cell_offset,
+                        cell_size,
+                        cell_size,
+                        fill,
+                        edge
+                    )
+                    .unwrap();
+                }
+            }
+            svg.push_str("</g>");
+        }
+        Primitive::FieldRaster { png_data, rows, cols } => {
+            let left = map_x_scaled(0.0, xmin, xmax, x_scale, layout)?;
+            let right = map_x_scaled(*cols as f64, xmin, xmax, x_scale, layout)?;
+            let top = map_y_scaled(*rows as f64, ymin, ymax, y_scale, layout)?;
+            let bottom = map_y_scaled(0.0, ymin, ymax, y_scale, layout)?;
+            let x = left.min(right);
+            let y = top.min(bottom);
+            let w = (right - left).abs();
+            let h = (bottom - top).abs();
+            write!(
+                svg,
+                "<image x=\"{x:.4}\" y=\"{y:.4}\" width=\"{w:.4}\" height=\"{h:.4}\" preserveAspectRatio=\"none\" image-rendering=\"pixelated\" href=\"data:image/png;base64,{}\" />",
+                png_data
             )
             .unwrap();
         }
@@ -1777,6 +1885,22 @@ fn primitive_bounds(primitive: &Primitive) -> Option<DataBounds> {
             min_y: (*y).min(*y + *h),
             max_y: (*y).max(*y + *h),
         }),
+        Primitive::FieldGrid { values, .. } => {
+            let rows = values.len();
+            let cols = values.first().map_or(0, |row| row.len());
+            Some(DataBounds {
+                min_x: 0.0,
+                max_x: cols as f64,
+                min_y: 0.0,
+                max_y: rows as f64,
+            })
+        }
+        Primitive::FieldRaster { rows, cols, .. } => Some(DataBounds {
+            min_x: 0.0,
+            max_x: *cols as f64,
+            min_y: 0.0,
+            max_y: *rows as f64,
+        }),
     }
 }
 
@@ -1829,17 +1953,23 @@ fn figure_layout(width_in: f64, height_in: f64, rows: usize, cols: usize) -> Vec
     layouts
 }
 
-fn axis_layout(layout: &PanelLayout, footer_height: f64) -> AxisLayout {
+fn axis_layout(layout: &PanelLayout, footer_height: f64, axis: &AxisScene) -> AxisLayout {
     let left_reserve = 40.0;
     let right_reserve = 16.0;
     let top_reserve = 22.0;
     let bottom_reserve = 34.0 + footer_height;
-    AxisLayout {
-        x: layout.left + left_reserve,
-        y: layout.top + top_reserve,
-        width: (layout.width - left_reserve - right_reserve).max(40.0),
-        height: (layout.height - top_reserve - bottom_reserve).max(40.0),
+    let mut x = layout.left + left_reserve;
+    let mut y = layout.top + top_reserve;
+    let mut width = (layout.width - left_reserve - right_reserve).max(40.0);
+    let mut height = (layout.height - top_reserve - bottom_reserve).max(40.0);
+    if axis.equal_aspect {
+        let size = width.min(height);
+        x += (width - size) * 0.5;
+        y += (height - size) * 0.5;
+        width = size;
+        height = size;
     }
+    AxisLayout { x, y, width, height }
 }
 
 fn legend_height(axis: &AxisScene) -> f64 {
@@ -1886,7 +2016,7 @@ fn figure_bounds(fig: &FigureScene, layouts: &[PanelLayout]) -> FigureBounds {
     let footer_height = max_footer_height(fig);
     for panel in &fig.panels {
         let layout = &layouts[panel.row * fig.cols + panel.col];
-        let axis = axis_layout(layout, footer_height);
+        let axis = axis_layout(layout, footer_height, &panel.axis);
         bounds.min_x = bounds.min_x.min(layout.left);
         bounds.min_y = bounds.min_y.min(axis.y - 18.0);
         bounds.max_x = bounds.max_x.max(layout.left + layout.width);
@@ -2049,6 +2179,63 @@ fn axis_ticks(min: f64, max: f64, scale: AxisScale, target: usize) -> PyResult<V
         AxisScale::Linear => Ok(nice_ticks(min, max, target)),
         AxisScale::Log => log_ticks(min, max),
     }
+}
+
+fn field_ticks(size: usize) -> Vec<f64> {
+    if size <= 1 {
+        return vec![0.0, size as f64];
+    }
+    let target = if size <= 96 { 3 } else if size <= 256 { 4 } else { 5 };
+    let step = ((size as f64) / ((target - 1) as f64)).round().max(1.0) as usize;
+    let mut ticks = vec![0.0];
+    for idx in 1..(target - 1) {
+        ticks.push((idx * step).min(size) as f64);
+    }
+    if ticks.last().copied().unwrap_or_default() != size as f64 {
+        ticks.push(size as f64);
+    }
+    ticks.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
+    ticks
+}
+
+fn parse_field_render_mode(value: &str) -> PyResult<FieldRenderMode> {
+    match value {
+        "auto" => Ok(FieldRenderMode::Auto),
+        "grid" => Ok(FieldRenderMode::Grid),
+        "embedded" => Ok(FieldRenderMode::Embedded),
+        other => Err(PyValueError::new_err(format!(
+            "unsupported field render mode '{other}'; use 'auto', 'grid', or 'embedded'"
+        ))),
+    }
+}
+
+fn field_png_data(values: &[Vec<f64>], cmap: &str, min: f64, max: f64) -> PyResult<String> {
+    let rows = values.len();
+    let cols = values.first().map_or(0, |row| row.len());
+    let mut rgba = Vec::with_capacity(rows * cols * 4);
+    for row in values {
+        for value in row {
+            let color = sample_colormap(cmap, normalize(*value, min, max));
+            rgba.push(color.0);
+            rgba.push(color.1);
+            rgba.push(color.2);
+            rgba.push(255);
+        }
+    }
+    let mut bytes = Vec::new();
+    {
+        let mut cursor = Cursor::new(&mut bytes);
+        let mut encoder = PngEncoder::new(&mut cursor, cols as u32, rows as u32);
+        encoder.set_color(ColorType::Rgba);
+        encoder.set_depth(BitDepth::Eight);
+        let mut writer = encoder
+            .write_header()
+            .map_err(|err| PyRuntimeError::new_err(format!("failed to start PNG encoder: {err}")))?;
+        writer
+            .write_image_data(&rgba)
+            .map_err(|err| PyRuntimeError::new_err(format!("failed to encode field PNG: {err}")))?;
+    }
+    Ok(BASE64_STANDARD.encode(bytes))
 }
 
 fn nice_num(range: f64, round: bool) -> f64 {
@@ -2604,6 +2791,15 @@ fn sample_colormap(name: &str, t: f64) -> Color {
     let t = t.clamp(0.0, 1.0);
     let stops = match name {
         "gray" => &[(0.0, Color(245, 245, 245)), (1.0, Color(45, 45, 45))][..],
+        "magma" => &[
+            (0.0, Color(0, 0, 4)),
+            (0.15, Color(28, 16, 68)),
+            (0.35, Color(79, 18, 123)),
+            (0.55, Color(129, 37, 129)),
+            (0.72, Color(181, 54, 122)),
+            (0.86, Color(229, 80, 100)),
+            (1.0, Color(252, 253, 191)),
+        ][..],
         "vik" => &[
             (0.0, Color(0, 74, 135)),
             (0.5, Color(245, 245, 245)),

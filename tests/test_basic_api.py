@@ -70,6 +70,37 @@ def test_field_is_vector_only(tmp_path: Path) -> None:
     assert text.count("<rect") >= 25
 
 
+def test_field_render_modes(tmp_path: Path) -> None:
+    grid = np.arange(25, dtype=float).reshape(5, 5)
+
+    fig_grid = cf.figure(width="single", height=3.0, grid=(1, 1))
+    ax_grid = fig_grid.panel(0, 0)
+    ax_grid.field(grid, render="grid")
+    out_grid = tmp_path / "field_grid.svg"
+    fig_grid.save(str(out_grid))
+    text_grid = out_grid.read_text()
+    assert "<image" not in text_grid
+
+    fig_auto = cf.figure(width="single", height=3.0, grid=(1, 1))
+    ax_auto = fig_auto.panel(0, 0)
+    ax_auto.field(grid, render="auto")
+    out_auto = tmp_path / "field_auto.svg"
+    fig_auto.save(str(out_auto))
+    text_auto = out_auto.read_text()
+    assert "<image" not in text_auto
+
+    fig_embedded = cf.figure(width="single", height=3.0, grid=(1, 1))
+    ax_embedded = fig_embedded.panel(0, 0)
+    ax_embedded.field(grid, render="embedded")
+    out_embedded = tmp_path / "field_embedded.svg"
+    fig_embedded.save(str(out_embedded))
+    text_embedded = out_embedded.read_text()
+    if getattr(cf, "BACKEND", None) == "rust":
+        assert "<image" in text_embedded
+    else:
+        assert "<image" not in text_embedded
+
+
 def test_histogram_svg_generation(tmp_path: Path) -> None:
     fig = cf.figure(width="single", height=3.0, grid=(1, 1))
     ax = fig.panel(0, 0)
@@ -86,6 +117,25 @@ def test_histogram_svg_generation(tmp_path: Path) -> None:
     assert ">dist<" in text
     assert ">value<" in text
     assert ">count<" in text
+
+
+def test_bar_hides_bottom_axis_by_default_and_can_show_it(tmp_path: Path) -> None:
+    fig = cf.figure(width="single", height=3.0, grid=(1, 2))
+    ax0 = fig.panel(0, 0)
+    ax0.bar(["A", "B"], [2, 3])
+    ax0.ylabel("value")
+
+    ax1 = fig.panel(0, 1)
+    ax1.bar(["A", "B"], [2, 3], show_x_axis=True)
+    ax1.ylabel("value")
+
+    out = tmp_path / "bars.svg"
+    fig.save(str(out))
+    text = out.read_text()
+
+    assert text.count('class="cf-axis"') == 3
+    assert text.count(">A<") == 2
+    assert text.count(">B<") == 2
 
 
 def test_log_scales_svg_generation(tmp_path: Path) -> None:

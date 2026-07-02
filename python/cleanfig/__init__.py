@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-__version__ = "0.1.0"
+__version__ = "1.1.1"
 
 
 if os.environ.get("CLEANFIG_FORCE_FALLBACK") == "1":

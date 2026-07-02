@@ -14,7 +14,7 @@ def save_outputs(fig: cf.Figure, stem: str) -> None:
         fig.save(str(out_dir / f"{stem}.pdf"))
 
 
-def main(theme: str = "publication", stem: str = "violin_box_plot") -> None:
+def main(theme: str = "publication", stem: str = "violin_box_light") -> None:
     np.random.seed(19680801)
     all_data = [np.random.normal(0, std, 100) for std in range(6, 10)]
 

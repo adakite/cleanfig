@@ -16,6 +16,7 @@ It focuses on a compact API, light visual defaults, and direct export to SVG, HT
 - publication-first light theme by default
 - optional dark theme for presentations
 - vector-first SVG output
+- auto grid/embedded rendering for dense field plots
 - PDF export from the Rust backend
 - dual Y axes
 - linear and log axes
@@ -31,7 +32,6 @@ The gallery includes all currently shipped example figures:
 - `four_panels_figure`
 - `four_panels_light`
 - `four_panels_dark`
-- `violin_box_plot`
 - `violin_box_light`
 - `violin_box_dark`
 

@@ -122,13 +122,14 @@ Returns a `PlotHandle` when color mapping is used.
 - `label`: legend entry
 - `yaxis`: `"left"` or `"right"`
 
-### `ax.bar(labels, values, yaxis="left", color=None, alpha=1.0)`
+### `ax.bar(labels, values, yaxis="left", color=None, alpha=1.0, show_x_axis=False)`
 
 - `labels`: categorical X labels
 - `values`: numeric heights
 - `yaxis`: `"left"` or `"right"`
 - `color`: named/hex color
 - `alpha`: opacity
+- `show_x_axis`: draw the bottom X axis line and ticks for bar charts
 
 ### `ax.histogram(data, bins=12, range=None, density=False, color=None, alpha=1.0, label=None, yaxis="left")`
 
@@ -141,11 +142,14 @@ Returns a `PlotHandle` when color mapping is used.
 - `label`: legend entry
 - `yaxis`: `"left"` or `"right"`
 
-### `ax.field(grid, cmap=None, cell_edges=False)`
+### `ax.field(grid, cmap=None, cell_edges=False, render="auto")`
 
 - `grid`: 2D numeric array
 - `cmap`: colormap name
 - `cell_edges`: draw subtle cell borders when `True`
+- `render`: `"auto"`, `"grid"`, or `"embedded"`
+
+`render="auto"` is the default. In the Rust backend, dense fields automatically switch to an embedded raster image to avoid visible seams between cells, while smaller fields remain grid/vector based. Use `"grid"` to force cell-by-cell rendering or `"embedded"` to force the rasterized field image path.
 
 Returns a `PlotHandle` for optional colorbar creation.
 
@@ -182,9 +186,9 @@ Creates a compact frameless legend from labeled layers.
 
 ## Current Feature Status
 
-- Supported: line, scatter, bar, histogram, violin, box, small vector field plots
+- Supported: line, scatter, bar, histogram, violin, box, field plots with auto grid/embedded rendering
 - Supported: light/dark themes, log X/Y axes, dual Y axes, SVG/HTML/PDF export
-- Not supported yet: `ax.spectrogram()`, logarithmic colorbars, raster rendering, geographic projections
+- Not supported yet: `ax.spectrogram()`, logarithmic colorbars, geographic projections
 
 ## Examples
 
@@ -192,7 +196,7 @@ Useful example scripts are provided in `examples/`:
 
 - `basic_line.py`
 - `four_panels.py`
-- `violin_box.py`
+- `violin_box_light.py`
 - `esec_dual_y_light.py` for a light-theme dual-Y example using a `pandas.DataFrame` loaded from a bundled ESEC catalog extract in `examples/Data/`
 - theme-specific wrappers for light/dark example output
 
@@ -229,10 +233,10 @@ print(cf.BACKEND)
 
 - no `ax.spectrogram()` yet
 - no logarithmic colorbars
-- no raster backend
+- no standalone raster plotting backend beyond embedded dense field rendering
 - no geographic projections
 - visual styling is intentionally constrained
-- field rendering is intended for small grids only
+- the Python fallback keeps field rendering grid-based even when `render="embedded"` is requested
 
 ## Development Install
 

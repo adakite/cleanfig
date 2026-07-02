@@ -38,7 +38,6 @@ twine check dist/* target/wheels/*
 ```bash
 python examples/basic_line.py
 python examples/four_panels.py
-python examples/violin_box.py
 python examples/esec_dual_y_light.py
 python examples/four_panels_light.py
 python examples/four_panels_dark.py

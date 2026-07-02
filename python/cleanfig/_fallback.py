@@ -8,7 +8,7 @@ from typing import Iterable
 
 DPI = 72.0
 FONT_FAMILY_DEFAULT = '"IBM Plex Sans", "Source Sans 3", Arial, sans-serif'
-FIELD_LIMIT = 10_000
+FIELD_LIMIT = 300_000
 COLORBAR_HISTOGRAM_LEVELS = 32
 
 
@@ -175,14 +175,22 @@ class Panel:
         axis = self._scene.panel(self.row, self.col).axis
         axis.legend = axis.legend or Legend([])
 
-    def bar(self, labels: list[str], values, yaxis: str = "left", color=None, alpha: float = 1.0) -> None:
+    def bar(
+        self,
+        labels: list[str],
+        values,
+        yaxis: str = "left",
+        color=None,
+        alpha: float = 1.0,
+        show_x_axis: bool = False,
+    ) -> None:
         ys = _vec(values)
         if len(labels) != len(ys):
             raise ValueError("labels and values must have the same length")
         axis = self._scene.panel(self.row, self.col).axis
         y_axis = _parse_y_axis_side(yaxis)
         axis.x_categories = list(labels)
-        axis.hide_x_axis = False
+        axis.hide_x_axis = not show_x_axis
         fill = _parse_color_literal(color) if color else (self._scene.theme.right_axis if y_axis == "right" else self._scene.theme.bar)
         for i, value in enumerate(ys):
             axis.layers.append(
@@ -240,7 +248,7 @@ class Panel:
             axis.legend = axis.legend or Legend([])
             axis.legend.entries.append(LegendEntry(label=label, glyph="marker", color=fill))
 
-    def field(self, grid, cmap: str | None = None, cell_edges: bool = False) -> "PlotHandle":
+    def field(self, grid, cmap: str | None = None, cell_edges: bool = False, render: str = "auto") -> "PlotHandle":
         values = _matrix(grid)
         rows = len(values)
         cols = len(values[0]) if rows else 0
@@ -248,19 +256,22 @@ class Panel:
             raise ValueError("field grid must be non-empty")
         if rows * cols > FIELD_LIMIT:
             raise ValueError(f"field grid too large for vector backend prototype: {rows * cols} cells > {FIELD_LIMIT}")
+        if render not in {"auto", "grid", "embedded"}:
+            raise ValueError(f"unsupported field render mode '{render}'; use 'auto', 'grid', or 'embedded'")
         cmap_name = cmap or "batlow"
         vmin = min(min(row) for row in values)
         vmax = max(max(row) for row in values)
         axis = self._scene.panel(self.row, self.col).axis
+        overlap = 0.015
         for r, row in enumerate(values):
             for c, value in enumerate(row):
                 axis.layers.append(
                     Layer(
                         primitive=Rect(
-                            x=float(c),
-                            y=float(rows - 1 - r),
-                            w=1.0,
-                            h=1.0,
+                            x=float(c) - (overlap if not cell_edges else 0.0),
+                            y=float(rows - 1 - r) - (overlap if not cell_edges else 0.0),
+                            w=1.0 + (2.0 * overlap if not cell_edges else 0.0),
+                            h=1.0 + (2.0 * overlap if not cell_edges else 0.0),
                             style=Style(
                                 fill=_sample_colormap(cmap_name, _normalize(value, vmin, vmax)),
                                 stroke=self._scene.theme.axis if cell_edges else None,
@@ -274,6 +285,8 @@ class Panel:
                 )
         axis.x_limits = (0.0, float(cols))
         axis.y_limits = (0.0, float(rows))
+        axis.x_tick_values = _field_ticks(cols)
+        axis.y_tick_values = _field_ticks(rows)
         flat = [value for row in values for value in row]
         return PlotHandle(min=vmin, max=vmax, cmap=cmap_name, uses_alpha=False, histogram=_histogram_bins(flat, COLORBAR_HISTOGRAM_LEVELS))
 
@@ -474,6 +487,8 @@ class AxisScene:
     colorbars: list["Colorbar"] = field(default_factory=list)
     x_categories: list[str] | None = None
     hide_x_axis: bool = False
+    x_tick_values: list[float] | None = None
+    y_tick_values: list[float] | None = None
 
     def resolved_limits(self) -> tuple[tuple[float, float], tuple[float, float], tuple[float, float] | None]:
         x_bounds = _bounds(self.layers)
@@ -651,8 +666,8 @@ def _render_axis(theme: Theme, axis: AxisScene, layout: tuple[float, float, floa
     has_right_axis = right_limits is not None or axis.right_y_label is not None or any(layer.y_axis == "right" for layer in axis.layers)
     if has_right_axis:
         parts.append(f'<line class="cf-axis" x1="{x + width:.2f}" y1="{y:.2f}" x2="{x + width:.2f}" y2="{y + height - axis_gap:.2f}" stroke="{right_color}" />')
-    x_ticks = [] if axis.x_categories else _nice_ticks_for_scale(xmin, xmax, axis.x_scale, 5)
-    y_ticks = _nice_ticks_for_scale(ymin, ymax, axis.y_scale, 5)
+    x_ticks = [] if axis.x_categories else (axis.x_tick_values or _nice_ticks_for_scale(xmin, xmax, axis.x_scale, 5))
+    y_ticks = axis.y_tick_values or _nice_ticks_for_scale(ymin, ymax, axis.y_scale, 5)
     if not axis.hide_x_axis:
         for tick in x_ticks:
             sx = _map_x(tick, xmin, xmax, x, width, axis.x_scale)
@@ -708,7 +723,7 @@ def _render_primitive(primitive, x: float, y: float, width: float, height: float
         y1 = _map_y(primitive.y + primitive.h, ymin, ymax, y, height, y_scale)
         left = min(x0, x1)
         top = min(y0, y1)
-        return f'<rect x="{left:.2f}" y="{top:.2f}" width="{abs(x1 - x0):.2f}" height="{abs(y1 - y0):.2f}" {_svg_style(primitive.style)} />'
+        return f'<rect x="{left:.4f}" y="{top:.4f}" width="{abs(x1 - x0):.4f}" height="{abs(y1 - y0):.4f}" shape-rendering="crispEdges" {_svg_style(primitive.style)} />'
     if isinstance(primitive, Polygon):
         pts = " ".join(f"{_map_x(px, xmin, xmax, x, width, x_scale):.2f},{_map_y(py, ymin, ymax, y, height, y_scale):.2f}" for px, py in primitive.points)
         return f'<polygon points="{pts}" {_svg_style(primitive.style)} />'
@@ -907,6 +922,23 @@ def _nice_ticks_for_scale(vmin: float, vmax: float, scale: str, target: int) -> 
         end = floor(log10(vmax))
         return [10.0**power for power in range(start, end + 1)]
     return _nice_ticks(vmin, vmax, target)
+
+
+def _field_ticks(size: int) -> list[float]:
+    if size <= 1:
+        return [0.0, float(size)]
+    target = 3 if size <= 96 else 4 if size <= 256 else 5
+    step = max(1, round(size / (target - 1)))
+    ticks = [0.0]
+    for idx in range(1, target - 1):
+        ticks.append(float(min(size, idx * step)))
+    if ticks[-1] != float(size):
+        ticks.append(float(size))
+    deduped: list[float] = []
+    for tick in ticks:
+        if not deduped or abs(deduped[-1] - tick) > 1e-9:
+            deduped.append(tick)
+    return deduped
 
 
 def _nice_num(value: float, rounding: bool) -> float:
@@ -1235,6 +1267,15 @@ def _sample_colormap(name: str, t: float) -> Color:
     t = max(0.0, min(1.0, t))
     maps = {
         "gray": [(0.0, Color(245, 245, 245)), (1.0, Color(45, 45, 45))],
+        "magma": [
+            (0.0, Color(0, 0, 4)),
+            (0.15, Color(28, 16, 68)),
+            (0.35, Color(79, 18, 123)),
+            (0.55, Color(129, 37, 129)),
+            (0.72, Color(181, 54, 122)),
+            (0.86, Color(229, 80, 100)),
+            (1.0, Color(252, 253, 191)),
+        ],
         "vik": [(0.0, Color(0, 74, 135)), (0.5, Color(245, 245, 245)), (1.0, Color(178, 34, 34))],
         "batlow": [(0.0, Color(20, 60, 120)), (0.35, Color(39, 121, 138)), (0.65, Color(118, 170, 91)), (1.0, Color(244, 213, 89))],
     }
