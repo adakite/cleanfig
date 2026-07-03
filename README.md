@@ -16,17 +16,19 @@ Useful links:
 
 ## Installation
 
-Install the latest GitHub version:
+Install from PyPI:
+
+```bash
+pip install cleanfig
+```
+
+
+Install the latest development GitHub version:
 
 ```bash
 pip install git+https://github.com/adakite/cleanfig.git
 ```
 
-Planned future PyPI install:
-
-```bash
-pip install cleanfig
-```
 
 ## Quick Start
 
