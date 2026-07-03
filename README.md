@@ -7,6 +7,10 @@
 [![Release](https://github.com/adakite/cleanfig/actions/workflows/release.yml/badge.svg)](https://github.com/adakite/cleanfig/actions/workflows/release.yml)
 [![Gallery](https://img.shields.io/badge/gallery-online-blue.svg)](https://adakite.github.io/cleanfig/gallery/)
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/adakite/cleanfig/main/docs/assets/logo.png" width="200" alt="cleanfig logo">
+</p>
+
 Clean, opinionated, vector-first scientific plotting for Python.
 `cleanfig` is a small Rust/Python plotting package for clean scientific figures with vector-first export.
 

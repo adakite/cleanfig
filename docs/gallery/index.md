@@ -1,5 +1,9 @@
 # Gallery
 
+
+
+
+
 `cleanfig` is designed to stay compact at the API level: create a figure, select a panel, add layers, then export.
 
 This gallery shows the shipped examples together with the actual plotting code patterns used to build them.
@@ -239,6 +243,14 @@ ax.scatter(x, mobility, size=3.6, alpha=0.8, yaxis="right")
 ax.right_ylabel("H/L [-]")
 ax.legend()
 ```
+
+## Logo
+
+![cleanfig logo](../assets/logo.png)
+
+The logo is generated with cleanfig itself from the ESEC volume/mobility example.
+
+
 
 ## Notes
 

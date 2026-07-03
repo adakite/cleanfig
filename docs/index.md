@@ -1,4 +1,9 @@
+<p align="center">
+  <img src="assets/logo.png" width="100" alt="cleanfig logo">
+</p>
+
 # cleanfig
+Clean, opinionated, vector-first scientific plotting for Python.
 
 `cleanfig` is a small Rust/Python plotting library for clean, publication-style, vector-first scientific figures.
 
