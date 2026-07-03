@@ -1,5 +1,13 @@
 # cleanfig
 
+[![PyPI version](https://img.shields.io/pypi/v/cleanfig.svg)](https://pypi.org/project/cleanfig/)
+[![Python versions](https://img.shields.io/pypi/pyversions/cleanfig.svg)](https://pypi.org/project/cleanfig/)
+[![License](https://img.shields.io/pypi/l/cleanfig.svg)](https://github.com/adakite/cleanfig/blob/main/LICENSE)
+[![CI](https://github.com/adakite/cleanfig/actions/workflows/ci.yml/badge.svg)](https://github.com/adakite/cleanfig/actions/workflows/ci.yml)
+[![Release](https://github.com/adakite/cleanfig/actions/workflows/release.yml/badge.svg)](https://github.com/adakite/cleanfig/actions/workflows/release.yml)
+[![Gallery](https://img.shields.io/badge/gallery-online-blue.svg)](https://adakite.github.io/cleanfig/gallery/)
+
+Clean, opinionated, vector-first scientific plotting for Python.
 `cleanfig` is a small Rust/Python plotting package for clean scientific figures with vector-first export.
 
 It is intentionally narrow: simple publication-style defaults, light visual clutter, compact labeling, and a small public API. The focus is on figures that should look close to final output without extensive styling code.
