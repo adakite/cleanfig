@@ -19,13 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
-Third-party notice
-
-This project includes built-in scientific colormap definitions derived from
-Fabio Crameri's Scientific colour maps.
-
-Citation:
-
-Crameri, F. (2023). Scientific colour maps (8.0.1). Zenodo.
-https://doi.org/10.5281/zenodo.8409685
