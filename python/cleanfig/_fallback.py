@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from math import exp, floor, log10, pi, sqrt
 from pathlib import Path
 from typing import Iterable
@@ -10,6 +12,7 @@ DPI = 72.0
 FONT_FAMILY_DEFAULT = '"IBM Plex Sans", "Source Sans 3", Arial, sans-serif'
 FIELD_LIMIT = 300_000
 COLORBAR_HISTOGRAM_LEVELS = 32
+TIMESERIES_WIDTH_IN = 9.5
 
 
 def figure(
@@ -19,18 +22,21 @@ def figure(
     panel_labels: bool = False,
     font: str | None = None,
     theme: str = "publication",
+    layout: str = "standard",
 ) -> "Figure":
     width_map = {"single": 3.4, "double": 7.0}
-    if width not in width_map:
+    layout_mode = _parse_layout_mode(layout)
+    if layout_mode == "standard" and width not in width_map:
         raise ValueError(f"unsupported width preset '{width}'; use 'single' or 'double'")
     rows, cols = grid
     if rows <= 0 or cols <= 0:
         raise ValueError("grid dimensions must be positive")
     scene = FigureScene(
-        width_in=width_map[width],
+        width_in=width_map[width] if layout_mode == "standard" else TIMESERIES_WIDTH_IN,
         height_in=height,
         rows=rows,
         cols=cols,
+        layout_mode=layout_mode,
         panel_labels=panel_labels,
         font_family=_normalize_font_family(font or FONT_FAMILY_DEFAULT),
         theme=Theme.parse(theme),
@@ -117,13 +123,15 @@ class Panel:
         histogram = _histogram_bins(color_input, COLORBAR_HISTOGRAM_LEVELS) if isinstance(color_input, list) else None
         return PlotHandle(min=cmin, max=cmax, cmap=cmap_name, uses_alpha=alpha < 1.0, histogram=histogram)
 
-    def line(self, x, y, color=None, width: float = 0.95, alpha: float = 1.0, label: str | None = None, yaxis: str = "left") -> None:
+    def line(self, x, y, color=None, width: float = 0.8, alpha: float = 1.0, label: str | None = None, yaxis: str = "left") -> None:
         xs = _vec(x)
         ys = _vec(y)
         if len(xs) != len(ys):
             raise ValueError("x and y must have the same length")
         y_axis = _parse_y_axis_side(yaxis)
         stroke = _parse_color_literal(color) if color else (self._scene.theme.right_axis if y_axis == "right" else self._scene.theme.line)
+        if self._scene.layout_mode == "timeseries" and abs(width - 0.8) < 1e-9:
+            width = 0.65
         axis = self._scene.panel(self.row, self.col).axis
         axis.layers.append(
             Layer(
@@ -416,6 +424,7 @@ class FigureScene:
     height_in: float
     rows: int
     cols: int
+    layout_mode: str
     panel_labels: bool
     font_family: str
     theme: "Theme"
@@ -444,7 +453,7 @@ class FigureScene:
         return f'<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>cleanfig</title><style>body{{margin:0;padding:24px;background:{self.theme.background.to_hex()};}}figure{{margin:0;display:flex;justify-content:center;}}</style></head><body><figure>{svg}</figure></body></html>'
 
     def to_svg(self) -> str:
-        layouts = _figure_layout(self.width_in, self.height_in, self.rows, self.cols)
+        layouts = _figure_layout(self.width_in, self.height_in, self.rows, self.cols, self.layout_mode)
         min_x, min_y, max_x, max_y = _figure_bounds(self, layouts)
         pad = 4.0
         width_pt = max(max_x - min_x + pad * 2.0, 1.0)
@@ -644,19 +653,73 @@ class Colorbar:
 
 def _render_panel(fig: FigureScene, panel: PanelScene, layout: tuple[float, float, float, float]) -> str:
     left, top, width, height = layout
-    axis = _axis_layout(layout, _max_footer_height(fig))
+    render_axis = _panel_axis_for_render(fig, panel)
+    footer_height = _footer_height(render_axis) if fig.layout_mode == "timeseries" else _max_footer_height(fig)
+    axis = _axis_layout(layout, footer_height, fig.layout_mode)
     parts = [f'<g data-panel="{panel.row}-{panel.col}">']
     if fig.panel_labels:
         letter = chr(ord("A") + panel.row * fig.cols + panel.col)
         parts.append(f'<text class="cf-text cf-panel" x="{axis[4] - 22.0:.2f}" y="{axis[5] - 10.0:.2f}">{letter}</text>')
-    parts.append(_render_axis(fig.theme, panel.axis, axis))
+    parts.append(_render_axis(fig.theme, render_axis, axis))
+    if _timeseries_uses_shared_right_legend(fig) and panel.col == 0 and panel.row == fig.rows // 2:
+        legend = _timeseries_shared_legend(fig)
+        if legend is not None:
+            parts.append(_render_legend_right(legend, axis))
     parts.append("</g>")
     return "".join(parts)
+
+
+def _panel_axis_for_render(fig: FigureScene, panel: PanelScene) -> AxisScene:
+    axis = deepcopy(panel.axis)
+    if fig.layout_mode == "timeseries":
+        if panel.row + 1 < fig.rows:
+            axis.hide_x_axis = True
+            axis.x_label = None
+        axis.x_limits = _timeseries_shared_x_limits(fig, panel.col, axis)
+        if _timeseries_uses_shared_right_legend(fig):
+            axis.legend = None
+    return axis
+
+
+def _timeseries_shared_x_limits(fig: FigureScene, col: int, axis: AxisScene) -> tuple[float, float]:
+    min_x = float("inf")
+    max_x = float("-inf")
+    for panel in fig.panels:
+        if panel.col != col:
+            continue
+        if panel.axis.x_limits is not None:
+            xmin, xmax = panel.axis.x_limits
+        else:
+            bounds = _bounds(panel.axis.layers)
+            if bounds is None:
+                continue
+            xmin, xmax = bounds[0], bounds[1]
+        min_x = min(min_x, xmin)
+        max_x = max(max_x, xmax)
+    if min_x != float("inf") and max_x != float("-inf"):
+        if axis.x_scale == "linear":
+            return min_x, max_x
+        return _expand_for_scale(min_x, max_x, axis.x_scale)
+    return axis.resolved_limits()[0]
+
+
+def _timeseries_uses_shared_right_legend(fig: FigureScene) -> bool:
+    return fig.layout_mode == "timeseries" and fig.cols == 1 and fig.rows == 3
+
+
+def _timeseries_shared_legend(fig: FigureScene) -> Legend | None:
+    if not _timeseries_uses_shared_right_legend(fig):
+        return None
+    for panel in fig.panels:
+        if panel.axis.legend and panel.axis.legend.entries:
+            return deepcopy(panel.axis.legend)
+    return None
 
 
 def _render_axis(theme: Theme, axis: AxisScene, layout: tuple[float, float, float, float]) -> str:
     panel_left, panel_top, panel_width, panel_height, x, y, width, height = layout
     (xmin, xmax), (ymin, ymax), right_limits = axis.resolved_limits()
+    x_is_datetime = _x_axis_looks_datetime(axis, xmin, xmax)
     parts = []
     right_color = theme.right_axis.to_hex()
     axis_gap = 0.0 if axis.hide_x_axis else 4.0
@@ -666,13 +729,13 @@ def _render_axis(theme: Theme, axis: AxisScene, layout: tuple[float, float, floa
     has_right_axis = right_limits is not None or axis.right_y_label is not None or any(layer.y_axis == "right" for layer in axis.layers)
     if has_right_axis:
         parts.append(f'<line class="cf-axis" x1="{x + width:.2f}" y1="{y:.2f}" x2="{x + width:.2f}" y2="{y + height - axis_gap:.2f}" stroke="{right_color}" />')
-    x_ticks = [] if axis.x_categories else (axis.x_tick_values or _nice_ticks_for_scale(xmin, xmax, axis.x_scale, 5))
+    x_ticks = [] if axis.x_categories else (axis.x_tick_values or (_datetime_ticks(xmin, xmax, _datetime_tick_target(width)) if x_is_datetime and axis.x_scale == "linear" else _nice_ticks_for_scale(xmin, xmax, axis.x_scale, 5)))
     y_ticks = axis.y_tick_values or _nice_ticks_for_scale(ymin, ymax, axis.y_scale, 5)
     if not axis.hide_x_axis:
         for tick in x_ticks:
             sx = _map_x(tick, xmin, xmax, x, width, axis.x_scale)
             parts.append(f'<line class="cf-tick" x1="{sx:.2f}" y1="{y + height:.2f}" x2="{sx:.2f}" y2="{y + height + 4.5:.2f}" />')
-            parts.append(f'<text class="cf-text cf-ticklabel" text-anchor="middle" x="{sx:.2f}" y="{y + height + 13.5:.2f}">{_svg_rich_text(_fmt_tick(tick, axis.x_scale))}</text>')
+            parts.append(f'<text class="cf-text cf-ticklabel" text-anchor="middle" x="{sx:.2f}" y="{y + height + 13.5:.2f}">{_svg_rich_text(_fmt_x_tick(tick, axis.x_scale, x_is_datetime))}</text>')
     if axis.x_categories:
         for idx, label in enumerate(axis.x_categories):
             sx = _map_x(float(idx), xmin, xmax, x, width, axis.x_scale)
@@ -746,6 +809,23 @@ def _render_legend(legend: Legend, x: float, top: float) -> str:
     return "".join(parts)
 
 
+def _render_legend_right(legend: Legend, layout: tuple[float, float, float, float, float, float, float, float]) -> str:
+    _, _, _, _, x0, y0, width, height = layout
+    parts = []
+    left = x0 + width + 22.0
+    cy = y0 + (height - _legend_height_from_count(len(legend.entries))) * 0.5 + 9.0
+    for entry in legend.entries:
+        if entry.glyph == "line":
+            parts.append(f'<line x1="{left:.2f}" y1="{cy:.2f}" x2="{left + 10.0:.2f}" y2="{cy:.2f}" stroke="{entry.color.to_hex()}" stroke-width="1.2" />')
+        elif entry.glyph == "marker":
+            parts.append(f'<circle cx="{left + 5.0:.2f}" cy="{cy:.2f}" r="2.6" fill="{entry.color.to_hex()}" />')
+        else:
+            parts.append(f'<rect x="{left + 1.0:.2f}" y="{cy - 3.0:.2f}" width="9" height="6" fill="{entry.color.to_hex()}" />')
+        parts.append(f'<text class="cf-text cf-legendtext" x="{left + 13.0:.2f}" y="{cy + 2.6:.2f}">{_svg_rich_text(entry.label)}</text>')
+        cy += 10.0
+    return "".join(parts)
+
+
 def _render_colorbar(colorbar: Colorbar, x: float, width: float, top: float) -> str:
     bar_w = min(width, 138.0)
     bar_h = 12.0
@@ -802,9 +882,23 @@ def _bounds(layers: list[Layer], y_axis: str | None = None) -> tuple[float, floa
     return acc
 
 
-def _figure_layout(width_in: float, height_in: float, rows: int, cols: int) -> list[tuple[float, float, float, float]]:
+def _figure_layout(width_in: float, height_in: float, rows: int, cols: int, layout_mode: str) -> list[tuple[float, float, float, float]]:
     width = width_in * DPI
     height = height_in * DPI
+    if layout_mode == "timeseries":
+        margin_left = 20.0
+        margin_right = 20.0
+        margin_top = 16.0
+        margin_bottom = 16.0
+        gap_x = 18.0
+        gap_y = 10.0
+        panel_width = max((width - margin_left - margin_right - gap_x * max(cols - 1, 0)) / cols, 60.0)
+        panel_height = max((height - margin_top - margin_bottom - gap_y * max(rows - 1, 0)) / rows, 56.0)
+        return [
+            (margin_left + c * (panel_width + gap_x), margin_top + r * (panel_height + gap_y), panel_width, panel_height)
+            for r in range(rows)
+            for c in range(cols)
+        ]
     margin_left = 26.0
     margin_right = 22.0
     margin_top = 22.0
@@ -825,12 +919,18 @@ def _figure_layout(width_in: float, height_in: float, rows: int, cols: int) -> l
     ]
 
 
-def _axis_layout(layout: tuple[float, float, float, float], footer_height: float) -> tuple[float, float, float, float, float, float, float, float]:
+def _axis_layout(layout: tuple[float, float, float, float], footer_height: float, layout_mode: str) -> tuple[float, float, float, float, float, float, float, float]:
     panel_left, panel_top, panel_width, panel_height = layout
-    left_reserve = 40.0
-    right_reserve = 16.0
-    top_reserve = 22.0
-    bottom_reserve = 34.0 + footer_height
+    if layout_mode == "timeseries":
+        left_reserve = 52.0
+        right_reserve = 14.0
+        top_reserve = 10.0
+        bottom_reserve = 34.0 + footer_height
+    else:
+        left_reserve = 40.0
+        right_reserve = 16.0
+        top_reserve = 22.0
+        bottom_reserve = 34.0 + footer_height
     x = panel_left + left_reserve
     y = panel_top + top_reserve
     width = max(panel_width - left_reserve - right_reserve, 40.0)
@@ -860,6 +960,14 @@ def _footer_height(axis: AxisScene) -> float:
     return _legend_height(axis) + _colorbar_footer_height(axis)
 
 
+def _axis_bottom_extent(axis: AxisScene) -> float:
+    if axis.hide_x_axis:
+        return 0.0
+    if axis.x_label:
+        return 31.0
+    return 18.0
+
+
 def _max_footer_height(fig: FigureScene) -> float:
     return max((_footer_height(panel.axis) for panel in fig.panels), default=0.0)
 
@@ -869,16 +977,40 @@ def _figure_bounds(fig: FigureScene, layouts: list[tuple[float, float, float, fl
     min_y = float("inf")
     max_x = float("-inf")
     max_y = float("-inf")
-    footer_height = _max_footer_height(fig)
     for panel in fig.panels:
         left, top, width, height = layouts[panel.row * fig.cols + panel.col]
-        _, _, _, _, x, y, _, _ = _axis_layout((left, top, width, height), footer_height)
-        min_x = min(min_x, left)
-        min_y = min(min_y, y - 18.0)
-        max_x = max(max_x, left + width)
-        max_y = max(max_y, top + height)
-        min_x = min(min_x, x - 34.0)
+        render_axis = _panel_axis_for_render(fig, panel)
+        footer_height = _footer_height(render_axis) if fig.layout_mode == "timeseries" else _max_footer_height(fig)
+        _, _, _, _, x, y, axis_width, axis_height = _axis_layout((left, top, width, height), footer_height, fig.layout_mode)
+        if fig.layout_mode == "timeseries":
+            left_pad, top_pad, right_pad, bottom_pad = 72.0, 22.0, 10.0, 18.0
+        else:
+            left_pad, top_pad, right_pad, bottom_pad = 34.0, 18.0, 6.0, 6.0
+        min_x = min(min_x, x - left_pad)
+        min_y = min(min_y, y - top_pad)
+        max_x = max(max_x, x + axis_width + right_pad)
+        max_y = max(max_y, y + axis_height + _axis_bottom_extent(render_axis) + footer_height + bottom_pad)
+    if _timeseries_uses_shared_right_legend(fig):
+        legend = _timeseries_shared_legend(fig)
+        if legend is not None:
+            panel = fig.panels[(fig.rows // 2) * fig.cols]
+            left, top, width, height = layouts[panel.row * fig.cols + panel.col]
+            render_axis = _panel_axis_for_render(fig, panel)
+            footer_height = _footer_height(render_axis)
+            _, _, _, _, x, y, axis_width, axis_height = _axis_layout((left, top, width, height), footer_height, fig.layout_mode)
+            max_x = max(max_x, x + axis_width + 36.0 + _estimated_legend_width(legend))
     return min_x, min_y, max_x, max_y
+
+
+def _parse_layout_mode(value: str) -> str:
+    if value not in {"standard", "timeseries"}:
+        raise ValueError(f"unsupported layout '{value}'; use 'standard' or 'timeseries'")
+    return value
+
+
+def _estimated_legend_width(legend: Legend) -> float:
+    max_chars = max((len(entry.label) for entry in legend.entries), default=0)
+    return 18.0 + max_chars * 4.4
 
 
 def _expand(vmin: float, vmax: float) -> tuple[float, float]:
@@ -908,10 +1040,41 @@ def _nice_ticks(vmin: float, vmax: float, target: int) -> list[float]:
     end = floor(vmax / step + 1) * step
     ticks = []
     value = start
+    eps = abs(step) * 1e-6
     while value <= end + step * 0.5:
-        if value >= vmin - step * 0.5 and value <= vmax + step * 0.5:
+        if value >= vmin - eps and value <= vmax + eps:
             ticks.append(_round_to(value, step))
         value += step
+    return ticks
+
+
+def _x_axis_looks_datetime(axis: AxisScene, xmin: float, xmax: float) -> bool:
+    if axis.x_scale != "linear" or axis.x_categories:
+        return False
+    span = xmax - xmin
+    label_mentions_date = bool(axis.x_label and "date" in axis.x_label.lower())
+    return label_mentions_date or (xmin >= 0.0 and xmax <= 50000.0 and span >= 30.0)
+
+
+def _datetime_tick_target(width: float) -> int:
+    return max(3, min(6, int(width // 140.0) + 2))
+
+
+def _datetime_ticks(vmin: float, vmax: float, target: int) -> list[float]:
+    if not (vmin < vmax):
+        return [vmin]
+    count = max(target, 3)
+    span = vmax - vmin
+    ticks = [vmin + span * i / max(count - 1, 1) for i in range(count)]
+    deduped: list[float] = []
+    for tick in ticks:
+        if not deduped or abs(tick - deduped[-1]) > 1e-6:
+            deduped.append(float(tick))
+    ticks = deduped
+    if ticks[0] > vmin + 1e-6:
+        ticks.insert(0, vmin)
+    if ticks[-1] < vmax - 1e-6:
+        ticks.append(vmax)
     return ticks
 
 
@@ -991,6 +1154,18 @@ def _fmt_tick(value: float, scale: str) -> str:
     if scale == "log":
         return f"10^{int(round(log10(value)))}"
     return _fmt(value)
+
+
+def _fmt_x_tick(value: float, scale: str, is_datetime: bool) -> str:
+    if is_datetime and scale == "linear":
+        return _fmt_datetime_tick(value)
+    return _fmt_tick(value, scale)
+
+
+def _fmt_datetime_tick(value: float) -> str:
+    epoch = datetime(1970, 1, 1)
+    dt = epoch + timedelta(days=float(int(value)))
+    return dt.strftime("%Y-%m")
 
 
 def _xml(value: str) -> str:

@@ -3,6 +3,7 @@ from importlib.util import find_spec
 from pathlib import Path
 
 import pytest
+import cleanfig as cf
 
 
 def test_basic_line_example_runs(tmp_path: Path, monkeypatch) -> None:
@@ -25,4 +26,20 @@ def test_esec_dual_y_example_runs(tmp_path: Path, monkeypatch) -> None:
 
     assert (tmp_path / "examples" / "output" / "esec_dual_y_light.svg").exists()
     assert (tmp_path / "examples" / "output" / "esec_dual_y_light.html").exists()
-    assert (tmp_path / "examples" / "output" / "esec_dual_y_light.pdf").exists() == (find_spec("cleanfig._cleanfig") is not None)
+    assert (tmp_path / "examples" / "output" / "esec_dual_y_light.pdf").exists() == (cf.BACKEND == "rust")
+
+
+def test_weather_timeserie_example_runs(tmp_path: Path, monkeypatch) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    monkeypatch.chdir(tmp_path)
+    runpy.run_path(str(repo_root / "examples" / "weather_timeserie_check.py"), run_name="__main__")
+
+    assert (tmp_path / "examples" / "output" / "weather_timeserie_check.pdf").exists() == (cf.BACKEND == "rust")
+
+
+def test_notebook_example_runs(tmp_path: Path, monkeypatch) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    monkeypatch.chdir(tmp_path)
+    runpy.run_path(str(repo_root / "examples" / "notebook_example.py"), run_name="__main__")
+
+    assert (tmp_path / "examples" / "output" / "notebook_example.svg").exists()

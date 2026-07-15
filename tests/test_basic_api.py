@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 import numpy as np
 import pytest
@@ -54,6 +55,36 @@ def test_svg_generation_and_panel_labels(tmp_path: Path) -> None:
     assert "<rect" in text
     assert ">A200<" not in text
     assert ">B200<" not in text
+
+
+def test_timeseries_layout_is_wide_and_shows_bottom_xlabel_once(tmp_path: Path) -> None:
+    fig = cf.figure(height=6.0, grid=(3, 1), layout="timeseries")
+    xs = [19000, 19100, 19200, 19300]
+    for row in range(3):
+        ax = fig.panel(row, 0)
+        ax.line(xs, [row + 1.0, row + 1.5, row + 0.5, row + 1.2], label=f"s{row}")
+        ax.ylabel(f"y{row}")
+        ax.xlabel("Date")
+    fig.panel(0, 0).legend()
+
+    out = tmp_path / "timeseries.svg"
+    fig.save(str(out))
+    text = out.read_text()
+
+    match = re.search(r'width="([0-9.]+)pt"', text)
+    assert match is not None
+    assert float(match.group(1)) > 650.0
+    height_match = re.search(r'height="([0-9.]+)pt"', text)
+    assert height_match is not None
+    assert text.count(">Date<") == 1
+    assert text.count(">s0<") == 1
+    assert text.index('data-panel="1-0"') < text.index(">s0<")
+    assert "e4" not in text
+    date_ticks = re.findall(r">20[0-9]{2}-[01][0-9]<", text)
+    assert 3 <= len(date_ticks) <= 6
+    label_match = re.search(r'<text class="cf-text cf-label" text-anchor="middle" x="[^"]+" y="([0-9.]+)">Date</text>', text)
+    assert label_match is not None
+    assert float(label_match.group(1)) < float(height_match.group(1))
 
 
 def test_field_is_vector_only(tmp_path: Path) -> None:

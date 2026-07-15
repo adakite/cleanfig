@@ -95,7 +95,7 @@ Current public entry points:
 
 ## API Reference
 
-### `cf.figure(width="single", height=4.0, grid=(1, 1), panel_labels=False, font=None, theme="publication")`
+### `cf.figure(width="single", height=4.0, grid=(1, 1), panel_labels=False, font=None, theme="publication", layout="standard")`
 
 - `width`: `"single"` or `"double"`
 - `height`: figure height in inches
@@ -103,6 +103,9 @@ Current public entry points:
 - `panel_labels`: add panel letters
 - `font`: custom font family string
 - `theme`: `"publication"` / `"nature"` / `"light"` alias, or `"dark"`
+- `layout`: `"standard"` or `"timeseries"`
+
+For `layout="timeseries"`, `cleanfig` uses an internal wide-format figure width optimized for stacked time series panels, so `width` is ignored.
 
 ### Axis labels, limits, and scales
 
@@ -212,6 +215,8 @@ Useful example scripts are provided in `examples/`:
 - `four_panels.py`
 - `violin_box_light.py`
 - `esec_dual_y_light.py` for a light-theme dual-Y example using a `pandas.DataFrame` loaded from a bundled ESEC catalog extract in `examples/Data/`
+- `weather_timeserie_check.py` for a compact multi-altitude time-series example built from a small CSV and `numpy`
+- `notebook_example.py` for an IPython-friendly scatter example that saves SVG and displays it inline when run in a notebook
 - theme-specific wrappers for light/dark example output
 
 ## Export Formats

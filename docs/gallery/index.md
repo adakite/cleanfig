@@ -123,6 +123,52 @@ ax.ylabel(r"$\partial_t u$")
 ax.legend()
 ```
 
+## `weather_timeserie_check`
+
+Minimal stacked weather time series example showing temperature, rainfall, and snow height across a few altitude bands.
+
+<div class="cf-shot">
+  <img src="assets/weather_timeserie_check.svg" alt="weather_timeserie_check example">
+</div>
+
+<div class="cf-links">
+  <a href="assets/weather_timeserie_check.svg">SVG</a>
+</div>
+
+```python
+from pathlib import Path
+
+import numpy as np
+import cleanfig as cf
+
+data = np.genfromtxt(Path("examples/Data/weather_timeserie_check.csv"), delimiter=",", names=True, dtype=None, encoding="utf-8")
+fig = cf.figure(layout="timeseries", height=6.0, grid=(3, 1))
+```
+
+## `notebook_example`
+
+Notebook-friendly scatter example with an inline display path when IPython is available.
+
+<div class="cf-shot">
+  <img src="assets/notebook_example.svg" alt="notebook_example example">
+</div>
+
+<div class="cf-links">
+  <a href="assets/notebook_example.svg">SVG</a>
+</div>
+
+```python
+from pathlib import Path
+
+import numpy as np
+import cleanfig as cf
+
+fig = cf.figure(width="double", height=6.0, grid=(1, 1), theme="light")
+ax = fig.panel(0, 0)
+sc = ax.scatter(local_incidence_angle_deg, satellite_sigma0_vv_db, color=lc_cm, size=6, alpha=0.85)
+ax.colorbar(sc, label="h_rms [cm]", placement="inside-left")
+```
+
 ## `four_panels_light`
 
 Publication-theme multi-panel layout mixing mapped scatter, regression lines, bars, and a field plot with colorbar.
