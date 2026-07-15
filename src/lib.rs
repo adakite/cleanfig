@@ -16,6 +16,7 @@ const FONT_FAMILY_DEFAULT: &str = "\"IBM Plex Sans\", \"Source Sans 3\", Arial, 
 const FIELD_LIMIT: usize = 300_000;
 const FIELD_RASTER_THRESHOLD: usize = 16_384;
 const COLORBAR_HISTOGRAM_LEVELS: usize = 32;
+const TIMESERIES_WIDTH_IN: f64 = 9.5;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum FieldRenderMode {
@@ -30,6 +31,7 @@ struct FigureScene {
     height_in: f64,
     rows: usize,
     cols: usize,
+    layout_mode: LayoutMode,
     panel_labels: bool,
     font_family: String,
     theme: Theme,
@@ -239,12 +241,19 @@ enum Theme {
     Dark,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LayoutMode {
+    Standard,
+    Timeseries,
+}
+
 impl FigureScene {
     fn new(
         width_in: f64,
         height_in: f64,
         rows: usize,
         cols: usize,
+        layout_mode: LayoutMode,
         panel_labels: bool,
         font_family: String,
         theme: Theme,
@@ -282,6 +291,7 @@ impl FigureScene {
             height_in,
             rows,
             cols,
+            layout_mode,
             panel_labels,
             font_family,
             theme,
@@ -326,7 +336,7 @@ impl FigureScene {
     }
 
     fn to_svg(&self) -> PyResult<String> {
-        let layouts = figure_layout(self.width_in, self.height_in, self.rows, self.cols);
+        let layouts = figure_layout(self.width_in, self.height_in, self.rows, self.cols, self.layout_mode);
         let bounds = figure_bounds(self, &layouts);
         let pad = 4.0;
         let width_pt = (bounds.max_x - bounds.min_x + pad * 2.0).max(1.0);
@@ -616,7 +626,7 @@ impl Panel {
         )
     }
 
-    #[pyo3(signature = (x, y, color=None, width=0.95, alpha=1.0, label=None, yaxis="left"))]
+    #[pyo3(signature = (x, y, color=None, width=0.8, alpha=1.0, label=None, yaxis="left"))]
     fn line(
         &self,
         x: &Bound<'_, PyAny>,
@@ -643,6 +653,11 @@ impl Panel {
                     fig.theme.line_default()
                 }
             }
+        };
+        let width = if fig.layout_mode == LayoutMode::Timeseries && (width - 0.8).abs() < 1e-9 {
+            0.65
+        } else {
+            width
         };
         let points = xs.into_iter().zip(ys).collect::<Vec<_>>();
         if alpha < 1.0 {
@@ -1325,7 +1340,7 @@ impl Backend for HtmlBackend {
 }
 
 #[pyfunction]
-#[pyo3(signature = (width="single", height=4.0, grid=(1, 1), panel_labels=false, font=None, theme="publication"))]
+#[pyo3(signature = (width="single", height=4.0, grid=(1, 1), panel_labels=false, font=None, theme="publication", layout="standard"))]
 fn figure(
     width: &str,
     height: f64,
@@ -1333,15 +1348,20 @@ fn figure(
     panel_labels: bool,
     font: Option<String>,
     theme: &str,
+    layout: &str,
 ) -> PyResult<Figure> {
-    let width_in = match width {
-        "single" => 3.4,
-        "double" => 7.0,
-        other => {
-            return Err(PyValueError::new_err(format!(
-                "unsupported width preset '{other}'; use 'single' or 'double'"
-            )))
-        }
+    let layout_mode = parse_layout_mode(layout)?;
+    let width_in = match layout_mode {
+        LayoutMode::Standard => match width {
+            "single" => 3.4,
+            "double" => 7.0,
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "unsupported width preset '{other}'; use 'single' or 'double'"
+                )))
+            }
+        },
+        LayoutMode::Timeseries => TIMESERIES_WIDTH_IN,
     };
     if grid.0 == 0 || grid.1 == 0 {
         return Err(PyValueError::new_err("grid dimensions must be positive"));
@@ -1352,6 +1372,7 @@ fn figure(
             height,
             grid.0,
             grid.1,
+            layout_mode,
             panel_labels,
             normalize_font_family(font.as_deref().unwrap_or(FONT_FAMILY_DEFAULT)),
             Theme::from_str(theme)?,
@@ -1369,8 +1390,13 @@ fn _cleanfig(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 }
 
 fn render_panel(svg: &mut String, fig: &FigureScene, panel: &PanelScene, layout: &PanelLayout) -> PyResult<()> {
-    let footer_height = max_footer_height(fig);
-    let axis_layout = axis_layout(layout, footer_height, &panel.axis);
+    let render_axis_scene = panel_axis_for_render(fig, panel);
+    let footer_height = if fig.layout_mode == LayoutMode::Timeseries {
+        footer_height(&render_axis_scene)
+    } else {
+        max_footer_height(fig)
+    };
+    let axis_layout = axis_layout(layout, footer_height, &render_axis_scene, fig.layout_mode);
     write!(
         svg,
         "<g data-panel=\"{}-{}\">",
@@ -1389,13 +1415,59 @@ fn render_panel(svg: &mut String, fig: &FigureScene, panel: &PanelScene, layout:
         )
         .unwrap();
     }
-    render_axis(svg, &panel.axis, &axis_layout, fig.theme)?;
+    render_axis(svg, &render_axis_scene, &axis_layout, fig.theme)?;
+    if timeseries_uses_shared_right_legend(fig) && panel.col == 0 && panel.row == fig.rows / 2 {
+        if let Some(legend) = timeseries_shared_legend(fig) {
+            render_legend_right(svg, &legend, &axis_layout)?;
+        }
+    }
     svg.push_str("</g>");
     Ok(())
 }
 
+fn panel_axis_for_render(fig: &FigureScene, panel: &PanelScene) -> AxisScene {
+    let mut axis = panel.axis.clone();
+    if fig.layout_mode == LayoutMode::Timeseries {
+        if panel.row + 1 < fig.rows {
+            axis.hide_x_axis = true;
+            axis.x_label = None;
+        }
+        axis.x_limits = Some(timeseries_shared_x_limits(fig, panel.col, &axis));
+        if timeseries_uses_shared_right_legend(fig) {
+            axis.legend = None;
+        }
+    }
+    axis
+}
+
+fn timeseries_shared_x_limits(fig: &FigureScene, col: usize, axis: &AxisScene) -> (f64, f64) {
+    let mut min_x = f64::INFINITY;
+    let mut max_x = f64::NEG_INFINITY;
+    for panel in &fig.panels {
+        if panel.col != col {
+            continue;
+        }
+        if let Some((xmin, xmax)) = panel.axis.x_limits {
+            min_x = min_x.min(xmin);
+            max_x = max_x.max(xmax);
+        } else if let Some((xmin, xmax)) = panel.axis.x_bounds() {
+            min_x = min_x.min(xmin);
+            max_x = max_x.max(xmax);
+        }
+    }
+    if min_x.is_finite() && max_x.is_finite() {
+        match axis.x_scale {
+            AxisScale::Linear => (min_x, max_x),
+            AxisScale::Log => expand_positive_bounds(min_x, max_x),
+        }
+    } else {
+        axis.resolved_x_limits()
+    }
+}
+
 fn render_axis(svg: &mut String, axis: &AxisScene, layout: &AxisLayout, theme: Theme) -> PyResult<()> {
     let (xmin, xmax) = axis.resolved_x_limits();
+    let x_is_datetime = x_axis_looks_datetime(axis, xmin, xmax);
     let (ymin, ymax) = axis.resolved_y_limits(YAxisSide::Left);
     let has_right_axis = axis.has_right_axis();
     let (rymin, rymax) = axis.resolved_y_limits(YAxisSide::Right);
@@ -1403,6 +1475,8 @@ fn render_axis(svg: &mut String, axis: &AxisScene, layout: &AxisLayout, theme: T
         Vec::new()
     } else if let Some(values) = &axis.x_tick_values {
         values.clone()
+    } else if x_is_datetime && axis.x_scale == AxisScale::Linear {
+        datetime_ticks(xmin, xmax, datetime_tick_target(layout.width))
     } else {
         axis_ticks(xmin, xmax, axis.x_scale, 5)?
     };
@@ -1460,7 +1534,7 @@ fn render_axis(svg: &mut String, axis: &AxisScene, layout: &AxisLayout, theme: T
                 layout.y + layout.height,
                 layout.y + layout.height + 4.5,
                 layout.y + layout.height + 13.5,
-                svg_rich_text(&format_tick_scaled(tick, axis.x_scale))
+                svg_rich_text(&format_x_tick(tick, axis.x_scale, x_is_datetime))
             )
             .unwrap();
         }
@@ -1565,6 +1639,19 @@ fn render_axis(svg: &mut String, axis: &AxisScene, layout: &AxisLayout, theme: T
         offset_y += colorbar_footer_height(axis);
     }
     Ok(())
+}
+
+fn timeseries_uses_shared_right_legend(fig: &FigureScene) -> bool {
+    fig.layout_mode == LayoutMode::Timeseries && fig.cols == 1 && fig.rows == 3
+}
+
+fn timeseries_shared_legend(fig: &FigureScene) -> Option<Legend> {
+    if !timeseries_uses_shared_right_legend(fig) {
+        return None;
+    }
+    fig.panels
+        .iter()
+        .find_map(|panel| panel.axis.legend.clone().filter(|legend| !legend.entries.is_empty()))
 }
 
 fn render_primitive(
@@ -1765,6 +1852,50 @@ fn render_legend(svg: &mut String, legend: &Legend, layout: &AxisLayout, top: f6
     Ok(())
 }
 
+fn render_legend_right(svg: &mut String, legend: &Legend, layout: &AxisLayout) -> PyResult<()> {
+    if legend.entries.is_empty() {
+        return Ok(());
+    }
+    let x = layout.x + layout.width + 22.0;
+    let mut y = layout.y + (layout.height - legend_height_from_count(legend.entries.len())) * 0.5 + 9.0;
+    for entry in &legend.entries {
+        match entry.glyph {
+            LegendGlyph::Line => {
+                write!(
+                    svg,
+                    "<line x1=\"{:.2}\" y1=\"{:.2}\" x2=\"{:.2}\" y2=\"{:.2}\" stroke=\"{}\" stroke-width=\"0.95\" />",
+                    x,
+                    y,
+                    x + 10.0,
+                    y,
+                    entry.color.to_hex()
+                )
+                .unwrap();
+            }
+            LegendGlyph::Marker => {
+                write!(
+                    svg,
+                    "<circle cx=\"{:.2}\" cy=\"{:.2}\" r=\"2.6\" fill=\"{}\" />",
+                    x + 5.0,
+                    y,
+                    entry.color.to_hex()
+                )
+                .unwrap();
+            }
+        }
+        write!(
+            svg,
+            "<text class=\"cf-text cf-legendtext\" x=\"{:.2}\" y=\"{:.2}\">{}</text>",
+            x + 13.0,
+            y + 2.6,
+            svg_rich_text(&entry.label)
+        )
+        .unwrap();
+        y += 10.0;
+    }
+    Ok(())
+}
+
 fn render_colorbar(svg: &mut String, colorbar: &Colorbar, layout: &AxisLayout, top: f64) -> PyResult<()> {
     let bar_w = layout.width.min(138.0);
     let bar_h = 12.0;
@@ -1922,42 +2053,67 @@ fn points_bounds(points: &[(f64, f64)]) -> Option<DataBounds> {
     Some(bounds)
 }
 
-fn figure_layout(width_in: f64, height_in: f64, rows: usize, cols: usize) -> Vec<PanelLayout> {
+fn figure_layout(width_in: f64, height_in: f64, rows: usize, cols: usize, layout_mode: LayoutMode) -> Vec<PanelLayout> {
     let width = width_in * DPI;
     let height = height_in * DPI;
-    let margin_left = 26.0;
-    let margin_right = 22.0;
-    let margin_top = 22.0;
-    let margin_bottom = 22.0;
-    let gap_x = 26.0;
-    let gap_y = 22.0;
-    let content_width = width - margin_left - margin_right;
-    let content_height = height - margin_top - margin_bottom;
-    let panel_size = ((content_width - gap_x * (cols.saturating_sub(1) as f64)) / cols as f64)
-        .min((content_height - gap_y * (rows.saturating_sub(1) as f64)) / rows as f64);
-    let grid_width = panel_size * cols as f64 + gap_x * (cols.saturating_sub(1) as f64);
-    let grid_height = panel_size * rows as f64 + gap_y * (rows.saturating_sub(1) as f64);
-    let start_left = margin_left + ((content_width - grid_width) * 0.5).max(0.0);
-    let start_top = margin_top + ((content_height - grid_height) * 0.5).max(0.0);
     let mut layouts = Vec::with_capacity(rows * cols);
-    for row in 0..rows {
-        for col in 0..cols {
-            layouts.push(PanelLayout {
-                left: start_left + col as f64 * (panel_size + gap_x),
-                top: start_top + row as f64 * (panel_size + gap_y),
-                width: panel_size,
-                height: panel_size,
-            });
+    match layout_mode {
+        LayoutMode::Standard => {
+            let margin_left = 26.0;
+            let margin_right = 22.0;
+            let margin_top = 22.0;
+            let margin_bottom = 22.0;
+            let gap_x = 26.0;
+            let gap_y = 22.0;
+            let content_width = width - margin_left - margin_right;
+            let content_height = height - margin_top - margin_bottom;
+            let panel_size = ((content_width - gap_x * (cols.saturating_sub(1) as f64)) / cols as f64)
+                .min((content_height - gap_y * (rows.saturating_sub(1) as f64)) / rows as f64);
+            let grid_width = panel_size * cols as f64 + gap_x * (cols.saturating_sub(1) as f64);
+            let grid_height = panel_size * rows as f64 + gap_y * (rows.saturating_sub(1) as f64);
+            let start_left = margin_left + ((content_width - grid_width) * 0.5).max(0.0);
+            let start_top = margin_top + ((content_height - grid_height) * 0.5).max(0.0);
+            for row in 0..rows {
+                for col in 0..cols {
+                    layouts.push(PanelLayout {
+                        left: start_left + col as f64 * (panel_size + gap_x),
+                        top: start_top + row as f64 * (panel_size + gap_y),
+                        width: panel_size,
+                        height: panel_size,
+                    });
+                }
+            }
+        }
+        LayoutMode::Timeseries => {
+            let margin_left = 20.0;
+            let margin_right = 20.0;
+            let margin_top = 16.0;
+            let margin_bottom = 16.0;
+            let gap_x = 18.0;
+            let gap_y = 10.0;
+            let panel_width = ((width - margin_left - margin_right - gap_x * (cols.saturating_sub(1) as f64)) / cols as f64).max(60.0);
+            let panel_height = ((height - margin_top - margin_bottom - gap_y * (rows.saturating_sub(1) as f64)) / rows as f64).max(56.0);
+            for row in 0..rows {
+                for col in 0..cols {
+                    layouts.push(PanelLayout {
+                        left: margin_left + col as f64 * (panel_width + gap_x),
+                        top: margin_top + row as f64 * (panel_height + gap_y),
+                        width: panel_width,
+                        height: panel_height,
+                    });
+                }
+            }
         }
     }
     layouts
 }
 
-fn axis_layout(layout: &PanelLayout, footer_height: f64, axis: &AxisScene) -> AxisLayout {
-    let left_reserve = 40.0;
-    let right_reserve = 16.0;
-    let top_reserve = 22.0;
-    let bottom_reserve = 34.0 + footer_height;
+fn axis_layout(layout: &PanelLayout, footer_height: f64, axis: &AxisScene, layout_mode: LayoutMode) -> AxisLayout {
+    let (left_reserve, right_reserve, top_reserve, bottom_reserve_base) = match layout_mode {
+        LayoutMode::Standard => (40.0, 16.0, 22.0, 34.0),
+        LayoutMode::Timeseries => (52.0, 14.0, 10.0, 34.0),
+    };
+    let bottom_reserve = bottom_reserve_base + footer_height;
     let mut x = layout.left + left_reserve;
     let mut y = layout.top + top_reserve;
     let mut width = (layout.width - left_reserve - right_reserve).max(40.0);
@@ -1999,6 +2155,16 @@ fn footer_height(axis: &AxisScene) -> f64 {
     legend_height(axis) + colorbar_footer_height(axis)
 }
 
+fn axis_bottom_extent(axis: &AxisScene) -> f64 {
+    if axis.hide_x_axis {
+        0.0
+    } else if axis.x_label.is_some() {
+        31.0
+    } else {
+        18.0
+    }
+}
+
 fn max_footer_height(fig: &FigureScene) -> f64 {
     fig.panels
         .iter()
@@ -2013,17 +2179,54 @@ fn figure_bounds(fig: &FigureScene, layouts: &[PanelLayout]) -> FigureBounds {
         max_x: f64::NEG_INFINITY,
         max_y: f64::NEG_INFINITY,
     };
-    let footer_height = max_footer_height(fig);
     for panel in &fig.panels {
         let layout = &layouts[panel.row * fig.cols + panel.col];
-        let axis = axis_layout(layout, footer_height, &panel.axis);
-        bounds.min_x = bounds.min_x.min(layout.left);
-        bounds.min_y = bounds.min_y.min(axis.y - 18.0);
-        bounds.max_x = bounds.max_x.max(layout.left + layout.width);
-        bounds.max_y = bounds.max_y.max(layout.top + layout.height);
-        bounds.min_x = bounds.min_x.min(axis.x - 34.0);
+        let render_axis_scene = panel_axis_for_render(fig, panel);
+        let footer_height = if fig.layout_mode == LayoutMode::Timeseries {
+            footer_height(&render_axis_scene)
+        } else {
+            max_footer_height(fig)
+        };
+        let axis = axis_layout(layout, footer_height, &render_axis_scene, fig.layout_mode);
+        let (left_pad, top_pad, right_pad, bottom_pad) = match fig.layout_mode {
+            LayoutMode::Standard => (34.0, 18.0, 6.0, 6.0),
+            LayoutMode::Timeseries => (72.0, 22.0, 10.0, 18.0),
+        };
+        bounds.min_x = bounds.min_x.min(axis.x - left_pad);
+        bounds.min_y = bounds.min_y.min(axis.y - top_pad);
+        bounds.max_x = bounds.max_x.max(axis.x + axis.width + right_pad);
+        bounds.max_y = bounds
+            .max_y
+            .max(axis.y + axis.height + axis_bottom_extent(&render_axis_scene) + footer_height + bottom_pad);
+    }
+    if timeseries_uses_shared_right_legend(fig) {
+        if let Some(legend) = timeseries_shared_legend(fig) {
+            let panel = &fig.panels[(fig.rows / 2) * fig.cols];
+            let layout = &layouts[panel.row * fig.cols + panel.col];
+            let render_axis_scene = panel_axis_for_render(fig, panel);
+            let footer_height = footer_height(&render_axis_scene);
+            let axis = axis_layout(layout, footer_height, &render_axis_scene, fig.layout_mode);
+            bounds.max_x = bounds
+                .max_x
+                .max(axis.x + axis.width + 36.0 + estimated_legend_width(&legend));
+        }
     }
     bounds
+}
+
+fn estimated_legend_width(legend: &Legend) -> f64 {
+    let max_chars = legend.entries.iter().map(|entry| entry.label.chars().count()).max().unwrap_or(0) as f64;
+    18.0 + max_chars * 4.4
+}
+
+fn parse_layout_mode(value: &str) -> PyResult<LayoutMode> {
+    match value {
+        "standard" => Ok(LayoutMode::Standard),
+        "timeseries" => Ok(LayoutMode::Timeseries),
+        other => Err(PyValueError::new_err(format!(
+            "unsupported layout '{other}'; use 'standard' or 'timeseries'"
+        ))),
+    }
 }
 
 fn histogram_bins(values: &[f64], bins: usize) -> Vec<f64> {
@@ -2145,11 +2348,50 @@ fn nice_ticks(min: f64, max: f64, target: usize) -> Vec<f64> {
     let end = (max / step).ceil() * step;
     let mut ticks = Vec::new();
     let mut value = start;
+    let eps = step.abs() * 1e-6;
     while value <= end + step * 0.5 {
-        if value >= min - step * 0.5 && value <= max + step * 0.5 {
+        if value >= min - eps && value <= max + eps {
             ticks.push(round_to(value, step));
         }
         value += step;
+    }
+    ticks
+}
+
+fn x_axis_looks_datetime(axis: &AxisScene, xmin: f64, xmax: f64) -> bool {
+    if axis.x_scale != AxisScale::Linear || axis.x_categories.is_some() {
+        return false;
+    }
+    let span = xmax - xmin;
+    let label_mentions_date = axis
+        .x_label
+        .as_deref()
+        .map(|label| label.to_ascii_lowercase().contains("date"))
+        .unwrap_or(false);
+    label_mentions_date || (xmin >= 0.0 && xmax <= 50_000.0 && span >= 30.0)
+}
+
+fn datetime_tick_target(width: f64) -> usize {
+    (((width / 140.0).floor() as usize) + 2).clamp(3, 6)
+}
+
+fn datetime_ticks(min: f64, max: f64, target: usize) -> Vec<f64> {
+    if !min.is_finite() || !max.is_finite() || max <= min {
+        return vec![min];
+    }
+    let count = target.max(3);
+    let span = max - min;
+    let mut ticks = Vec::with_capacity(count);
+    for idx in 0..count {
+        let t = idx as f64 / (count.saturating_sub(1)) as f64;
+        ticks.push(min + span * t);
+    }
+    ticks.dedup_by(|a, b| (*a - *b).abs() < 1e-6);
+    if ticks.first().copied().unwrap_or(min) > min + 1e-6 {
+        ticks.insert(0, min);
+    }
+    if ticks.last().copied().unwrap_or(max) < max - 1e-6 {
+        ticks.push(max);
     }
     ticks
 }
@@ -2339,6 +2581,34 @@ fn format_tick_scaled(value: f64, scale: AxisScale) -> String {
             }
         }
     }
+}
+
+fn format_x_tick(value: f64, scale: AxisScale, is_datetime: bool) -> String {
+    if is_datetime && scale == AxisScale::Linear {
+        format_datetime_tick(value)
+    } else {
+        format_tick_scaled(value, scale)
+    }
+}
+
+fn format_datetime_tick(value: f64) -> String {
+    let whole_days = value.floor() as i64;
+    let (year, month, _day) = civil_from_days(whole_days);
+    format!("{year:04}-{month:02}")
+}
+
+fn civil_from_days(days_since_1970: i64) -> (i32, u32, u32) {
+    let z = days_since_1970 + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = mp + if mp < 10 { 3 } else { -9 };
+    let year = y + if m <= 2 { 1 } else { 0 };
+    (year as i32, m as u32, d as u32)
 }
 
 fn xml_escape(value: &str) -> String {

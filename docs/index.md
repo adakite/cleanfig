@@ -43,5 +43,7 @@ The gallery includes all currently shipped example figures:
 - `four_panels_dark`
 - `violin_box_light`
 - `violin_box_dark`
+- `weather_timeserie_check`
+- `notebook_example`
 
 Go directly to [the gallery](gallery/) to browse the outputs.
